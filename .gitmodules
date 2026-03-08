@@ -34,3 +34,7 @@
 	path = sepp
 	url = https://github.com/gholtzap/SEPP.git
 	branch = main
+[submodule "smsf"]
+	path = smsf
+	url = https://github.com/gholtzap/smsf.git
+	branch = main

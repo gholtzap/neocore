@@ -155,6 +155,26 @@ services:
       - NRF_URI=${NRF_URI}
     restart: unless-stopped
 
+  smsf:
+    build:
+      context: ./smsf
+      dockerfile: ../docker/smsf/Dockerfile
+    container_name: smsf
+    hostname: smsf
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      nrf:
+        condition: service_healthy
+    networks:
+      5g-core-net:
+        ipv4_address: ${SMSF_IP}
+    ports:
+      - "8090:8080"
+    env_file:
+      - ./config/smsf/.env
+    restart: unless-stopped
+
   amf:
     build:
       context: ./amf

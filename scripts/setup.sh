@@ -53,20 +53,13 @@ if ! command -v gum &> /dev/null; then
     echo ""
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/helpers/common.sh"
+
 gum style \
 	--foreground 212 --border-foreground 212 --border double \
 	--align center --width 50 --margin "1 2" --padding "2 4" \
 	'5G CORE' 'Setup Script'
-
-check_command() {
-    if command -v $1 &> /dev/null; then
-        gum style --foreground 42 "✓ $2 is installed"
-        return 0
-    else
-        gum style --foreground 196 "✗ $2 is not installed"
-        return 1
-    fi
-}
 
 gum style --foreground 86 --bold "[1/7] Checking prerequisites..."
 echo ""
@@ -75,17 +68,8 @@ prerequisites_met=true
 
 if check_command docker "Docker"; then
     gum style --foreground 244 "  $(docker --version)"
-
-    mem_bytes=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo "0")
-    mem_gb=$((mem_bytes / 1024 / 1024 / 1024))
-
-    if [ "$mem_gb" -lt 16 ]; then
-        gum style --foreground 196 "✗ Docker memory is too low: ${mem_gb}GB (16GB+ required)"
-        gum style --foreground 208 "  Configure Docker Desktop → Settings → Resources → Memory"
-        gum style --foreground 208 "  Set memory to at least 16GB to avoid build failures"
+    if ! check_docker_memory 16; then
         prerequisites_met=false
-    else
-        gum style --foreground 42 "  Memory: ${mem_gb}GB"
     fi
 else
     prerequisites_met=false

@@ -7,12 +7,13 @@ if ! command -v gum &> /dev/null; then
     exit 1
 fi
 
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+source "$SCRIPT_DIR/helpers/common.sh"
+
 gum style \
 	--foreground 212 --border-foreground 212 --border double \
 	--align center --width 50 --margin "1 2" --padding "2 4" \
 	'5G CORE' 'Automated Test Script'
-
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 TEST_DIR="/tmp/5g-core-test-$(date +%s)"
 
@@ -21,6 +22,13 @@ cleanup() {
         gum style --foreground 220 "Cleaning up test environment..."
         cd "$REPO_ROOT"
         if [ -d "$TEST_DIR" ]; then
+            if [ "${SAVE_LOGS_ON_FAILURE:-false}" = "true" ]; then
+                LOG_DIR="$REPO_ROOT/test-logs-$(date +%s)"
+                mkdir -p "$LOG_DIR"
+                gum style --foreground 220 "Saving logs to $LOG_DIR..."
+                (cd "$TEST_DIR" && docker compose logs > "$LOG_DIR/all-services.log" 2>&1)
+                gum style --foreground 42 "✓ Logs saved to $LOG_DIR"
+            fi
             (cd "$TEST_DIR" && docker compose down -v 2>/dev/null || true)
         fi
         rm -rf "$TEST_DIR"
@@ -31,6 +39,17 @@ cleanup() {
 trap cleanup EXIT
 
 gum style --foreground 86 --bold "[1/6] Creating test environment..."
+echo ""
+
+gum style --foreground 220 "Checking for existing 5G core services..."
+if docker ps --format '{{.Names}}' | grep -qE '^(amf|nrf|ausf|udm|nssf|smf|upf|mongodb|ueransim)'; then
+    gum style --foreground 220 "Found running 5G core services. Stopping them first..."
+    (cd "$REPO_ROOT" && docker compose down 2>/dev/null || true)
+    sleep 2
+    gum style --foreground 42 "✓ Existing services stopped"
+else
+    gum style --foreground 42 "✓ No conflicting services found"
+fi
 echo ""
 
 gum style --foreground 220 "Creating test directory: $TEST_DIR"
@@ -44,24 +63,62 @@ echo ""
 gum style --foreground 220 "Copying current repository state..."
 rsync -a --exclude='.git' --exclude='node_modules' --exclude='target' \
     --exclude='UERANSIM' --exclude='Open5GS' --exclude='test-free5gc' \
+    --exclude='amf' --exclude='ausf' --exclude='nrf' --exclude='nssf' \
+    --exclude='smf' --exclude='udm' --exclude='upf' --exclude='scp' \
+    --exclude='sepp' --exclude='smsf' \
     "$REPO_ROOT/" "$TEST_DIR/"
 gum style --foreground 42 "✓ Repository copied"
 echo ""
 
 cd "$TEST_DIR"
 
-gum style --foreground 86 --bold "[3/6] Running setup with defaults..."
+gum style --foreground 220 "Verifying required directories..."
+if [ ! -d "docker" ]; then
+    gum style --foreground 196 "✗ docker directory was not copied"
+    ls -la
+    exit 1
+fi
+if [ ! -d "config" ]; then
+    gum style --foreground 196 "✗ config directory was not copied"
+    exit 1
+fi
+
+gum style --foreground 244 "Copying docker subdirectories..."
+DOCKER_SUBDIRS=(amf ausf nrf nssf smf udm upf scp sepp smsf)
+for subdir in "${DOCKER_SUBDIRS[@]}"; do
+    if [ ! -d "docker/$subdir" ]; then
+        if [ -d "$REPO_ROOT/docker/$subdir" ]; then
+            cp -r "$REPO_ROOT/docker/$subdir" docker/
+            gum style --foreground 42 "✓ Copied docker/$subdir"
+        else
+            gum style --foreground 196 "✗ docker/$subdir not found in source repo"
+            exit 1
+        fi
+    fi
+done
+
+gum style --foreground 42 "✓ Required directories present"
 echo ""
 
-check_command() {
-    if command -v $1 &> /dev/null; then
-        gum style --foreground 42 "✓ $2 is installed"
-        return 0
+gum style --foreground 220 "Verifying and copying config files..."
+for nf in ausf udm nssf scp smsf smf amf; do
+    if [ -d "$REPO_ROOT/config/$nf" ]; then
+        mkdir -p "config/$nf"
+        if [ "$(ls -A "$REPO_ROOT/config/$nf" 2>/dev/null)" ]; then
+            cp -r "$REPO_ROOT/config/$nf/". "config/$nf/"
+            gum style --foreground 42 "✓ Copied config/$nf/ ($(ls -A config/$nf | wc -l | tr -d ' ') files)"
+        else
+            gum style --foreground 220 "  No files in config/$nf/"
+        fi
     else
-        gum style --foreground 196 "✗ $2 is not installed"
-        return 1
+        gum style --foreground 244 "  Skipping config/$nf/ (not found)"
     fi
-}
+done
+gum style --foreground 42 "✓ Config files verified"
+echo ""
+
+gum style --foreground 86 --bold "[3/6] Running setup with defaults..."
+echo ""
 
 gum style --foreground 220 "Checking prerequisites..."
 prerequisites_met=true
@@ -77,19 +134,37 @@ fi
 gum style --foreground 42 "✓ Prerequisites met"
 echo ""
 
-gum style --foreground 220 "Initializing git submodules..."
-git init
-git submodule init
-git submodule update --init --recursive
-gum style --foreground 42 "✓ Submodules initialized"
+gum style --foreground 220 "Cloning required repositories..."
 echo ""
 
-if [ ! -d "UERANSIM" ]; then
-    gum style --foreground 220 "Cloning UERANSIM..."
-    git clone --depth 1 https://github.com/aligungr/UERANSIM.git
-    gum style --foreground 42 "✓ UERANSIM cloned"
-    echo ""
-fi
+clone_repo() {
+    local dir="$1"
+    local url="$2"
+    if [ ! -d "$dir" ]; then
+        gum style --foreground 244 "Cloning $dir..."
+        git clone --depth 1 "$url" "$dir" 2>&1 | sed 's/^/  /'
+        if [ ! -d "$dir" ]; then
+            gum style --foreground 196 "✗ Failed to clone $dir"
+            exit 1
+        fi
+    fi
+}
+
+clone_repo "UERANSIM" "https://github.com/aligungr/UERANSIM.git"
+clone_repo "amf" "https://github.com/gholtzap/amf.git"
+clone_repo "ausf" "https://github.com/gholtzap/ausf"
+clone_repo "nrf" "https://github.com/gholtzap/nrf.git"
+clone_repo "nssf" "https://github.com/gholtzap/nssf"
+clone_repo "smf" "https://github.com/gholtzap/smf"
+clone_repo "udm" "https://github.com/gholtzap/udm"
+clone_repo "upf" "https://github.com/gholtzap/upf"
+clone_repo "scp" "https://github.com/gholtzap/scp"
+clone_repo "sepp" "https://github.com/gholtzap/SEPP.git"
+clone_repo "smsf" "https://github.com/gholtzap/smsf.git"
+
+echo ""
+gum style --foreground 42 "✓ All repositories cloned"
+echo ""
 
 if [ -f .env.example ] && [ ! -f .env ]; then
     gum style --foreground 220 "Creating .env from template..."
@@ -118,21 +193,7 @@ gum style --foreground 220 "Starting MongoDB..."
 docker compose up -d mongodb
 
 gum style --foreground 220 "Waiting for MongoDB to be ready..."
-max_attempts=30
-attempt=0
-while [ $attempt -lt $max_attempts ]; do
-    if docker compose exec -T mongodb mongosh --quiet --eval "db.adminCommand('ping').ok" 2>/dev/null | grep -q "1"; then
-        gum style --foreground 42 "✓ MongoDB ready"
-        break
-    fi
-    attempt=$((attempt + 1))
-    sleep 1
-done
-
-if [ $attempt -eq $max_attempts ]; then
-    gum style --foreground 196 "✗ MongoDB failed to start"
-    exit 1
-fi
+wait_for_mongodb 30 || exit 1
 echo ""
 
 gum style --foreground 220 "Provisioning test subscriber..."
@@ -183,8 +244,28 @@ provision().catch(console.error);
 PROVISION_EOF
 
 docker cp "$TEMP_SCRIPT" "$MONGODB_CONTAINER:/tmp/provision.js"
-docker exec "$MONGODB_CONTAINER" sh -c "which npm > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq nodejs npm > /dev/null 2>&1)"
-docker exec "$MONGODB_CONTAINER" node /tmp/provision.js > /dev/null 2>&1
+
+gum style --foreground 244 "Installing Node.js in MongoDB container..."
+if ! docker exec "$MONGODB_CONTAINER" sh -c "which npm > /dev/null 2>&1 || (apt-get update -qq && apt-get install -y -qq nodejs npm)"; then
+    gum style --foreground 196 "✗ Failed to install Node.js"
+    exit 1
+fi
+
+gum style --foreground 244 "Installing mongodb npm package..."
+docker exec "$MONGODB_CONTAINER" sh -c "cd /tmp && npm init -y > /dev/null 2>&1"
+if ! docker exec "$MONGODB_CONTAINER" sh -c "cd /tmp && npm install mongodb@4 > /dev/null 2>&1"; then
+    gum style --foreground 196 "✗ Failed to install mongodb package"
+    exit 1
+fi
+
+gum style --foreground 244 "Running provisioning script..."
+if ! docker exec "$MONGODB_CONTAINER" sh -c "cd /tmp && node provision.js"; then
+    gum style --foreground 196 "✗ Provisioning script failed"
+    docker exec "$MONGODB_CONTAINER" rm /tmp/provision.js || true
+    rm "$TEMP_SCRIPT"
+    exit 1
+fi
+
 docker exec "$MONGODB_CONTAINER" rm /tmp/provision.js
 rm "$TEMP_SCRIPT"
 gum style --foreground 42 "✓ Subscriber provisioned"
@@ -219,11 +300,14 @@ for service in $services; do
 
     if ! docker compose ps "$service" | grep -q "Up"; then
         gum style --foreground 196 "✗ $service is not running"
+        gum style --foreground 244 "Last 30 lines of $service logs:"
+        docker compose logs --tail=30 "$service" 2>&1 | sed 's/^/  /'
+        echo ""
         error_found=true
         continue
     fi
 
-    error_logs=$(docker compose logs "$service" 2>&1 | grep -iE "error|fatal|panic|exception" | grep -viE "error_code.*0|no error|Sessions collection is not set up|NamespaceNotFound.*config.system.sessions" || true)
+    error_logs=$(docker compose logs "$service" 2>&1 | grep -iE "error|fatal|panic|exception" | grep -viE "error_code.*0|no error|Sessions collection is not set up|NamespaceNotFound.*config.system.sessions|Constraint check result: 0|Opening WiredTiger|Cell selection failure, no suitable or acceptable cell found" || true)
 
     if [ -n "$error_logs" ]; then
         gum style --foreground 196 "✗ Errors found in $service:"
@@ -238,6 +322,7 @@ done
 echo ""
 
 if [ "$error_found" = true ]; then
+    SAVE_LOGS_ON_FAILURE=true
     gum style \
         --foreground 196 --border-foreground 196 --border double \
         --align center --width 50 --margin "1 2" --padding "2 4" \

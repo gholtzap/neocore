@@ -29,6 +29,7 @@ show_menu() {
         "Custom" \
         "Update Submodules" \
         "Rebuild Web UI" \
+        "Publish Images" \
         "Exit")
 }
 
@@ -175,6 +176,79 @@ do_update_submodules() {
 
     update_submodules
     commit_push
+}
+
+do_publish_images() {
+    gum style --foreground 86 --bold "Publish Docker Images to GHCR"
+    echo ""
+
+    REGISTRY="ghcr.io"
+    REPO="gholtzap/5g-core"
+    SERVICES=(amf ausf nrf nssf udm smf upf scp sepp smsf web-ui ueransim)
+
+    if ! command -v docker &> /dev/null; then
+        gum style --foreground 196 "Docker is not installed"
+        exit 1
+    fi
+
+    gum style --foreground 220 "Logging in to $REGISTRY..."
+    if ! echo "${GHCR_TOKEN}" | docker login "$REGISTRY" -u "${GHCR_USER:-gholtzap}" --password-stdin 2>/dev/null; then
+        gum style --foreground 208 "Auto-login failed. Trying interactive login..."
+        if ! docker login "$REGISTRY"; then
+            gum style --foreground 196 "Login failed. Set GHCR_TOKEN and GHCR_USER env vars, or run: docker login ghcr.io"
+            exit 1
+        fi
+    fi
+    gum style --foreground 42 "Logged in to $REGISTRY"
+    echo ""
+
+    TAG=$(git rev-parse --short HEAD 2>/dev/null || echo "latest")
+
+    if gum confirm "Build all images before pushing?"; then
+        gum style --foreground 220 "Building all services..."
+        if ! docker compose build --no-cache; then
+            print_build_failure
+            exit 1
+        fi
+        gum style --foreground 42 "Build complete"
+        echo ""
+    fi
+
+    failed=()
+    for service in "${SERVICES[@]}"; do
+        local_image="5g-core-${service}"
+        remote_image="${REGISTRY}/${REPO}-${service}"
+
+        gum style --foreground 220 "Publishing ${service}..."
+
+        if ! docker image inspect "${local_image}" &>/dev/null; then
+            if ! docker image inspect "${service}" &>/dev/null; then
+                gum style --foreground 208 "  No local image found for ${service}, skipping"
+                failed+=("$service")
+                continue
+            fi
+            local_image="${service}"
+        fi
+
+        docker tag "${local_image}" "${remote_image}:${TAG}"
+        docker tag "${local_image}" "${remote_image}:latest"
+
+        if docker push "${remote_image}:${TAG}" && docker push "${remote_image}:latest"; then
+            gum style --foreground 42 "  ${service} pushed (${TAG} + latest)"
+        else
+            gum style --foreground 196 "  ${service} push failed"
+            failed+=("$service")
+        fi
+    done
+
+    echo ""
+    if [ ${#failed[@]} -eq 0 ]; then
+        gum style --foreground 42 --bold "All images published to ${REGISTRY}/${REPO}-*"
+    else
+        gum style --foreground 208 "Published with failures: ${failed[*]}"
+    fi
+    gum style --foreground 244 "Tag: ${TAG}"
+    echo ""
 }
 
 do_rebuild_webui() {
@@ -363,6 +437,7 @@ while true; do
         "Custom") do_custom; break ;;
         "Update Submodules") do_update_submodules; break ;;
         "Rebuild Web UI") do_rebuild_webui; break ;;
+        "Publish Images") do_publish_images; break ;;
         "Exit")
             gum style --foreground 244 "Exiting..."
             exit 0

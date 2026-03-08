@@ -3,6 +3,14 @@ name = "platform-api"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "platform-api"
+path = "src/main.rs"
+
+[[bin]]
+name = "create-tenant"
+path = "src/bin/create_tenant.rs"
+
 [dependencies]
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }

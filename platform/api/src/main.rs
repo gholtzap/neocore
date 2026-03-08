@@ -1,19 +1,8 @@
-mod auth;
-mod db;
-mod routes;
-mod terraform;
-mod types;
-
 use axum::{middleware, routing::{delete, get, post}, Router};
 use std::path::PathBuf;
 use tower_http::cors::CorsLayer;
 
-#[derive(Clone)]
-pub struct AppState {
-    pub db: db::Db,
-    pub terraform_dir: PathBuf,
-    pub hcloud_token: String,
-}
+use platform_api::{auth, db, routes, AppState};
 
 fn env_or_panic(key: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| panic!("{} must be set", key))

@@ -25,3 +25,10 @@ TODO.md
 /UERANSIM/
 
 submodule_update.ps1
+
+platform/terraform/workspaces/
+platform/terraform/.terraform/
+platform/terraform/*.tfstate
+platform/terraform/*.tfstate.backup
+platform/terraform/.terraform.lock.hcl
+platform/api/target/

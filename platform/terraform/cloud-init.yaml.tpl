@@ -69,9 +69,23 @@ runcmd:
     HOME_PLMN=${mcc}${mnc}
     ALLOWED_PLMNS=${mcc}${mnc}
 
+    UPF_HOST=$PUBLIC_IP
+    N3_ADVERTISE_IP=$PUBLIC_IP
+    NGAP_ADVERTISE_IP=$PUBLIC_IP
+
     RUST_LOG=info
     NODE_ENV=production
     ENVEOF
+
+  - |
+    sed -i "s|n3_address:.*|n3_address: \"0.0.0.0:2152\"|" /opt/5g-core/upf/config.yaml
+
+  - |
+    sed -i "s|\"registered_ip_addr\":.*|\"registered_ip_addr\": \"$PUBLIC_IP\",|" /opt/5g-core/config/amf/amfcfg.json
+
+  - |
+    echo "" >> /opt/5g-core/config/smf/.env
+    echo "UPF_HOST=$PUBLIC_IP" >> /opt/5g-core/config/smf/.env
 
   - cd /opt/5g-core && docker compose pull --ignore-pull-failures
   - cd /opt/5g-core && docker compose build
